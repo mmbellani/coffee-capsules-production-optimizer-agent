@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# DuckDB warehouse (rebuild with scripts/init_db.py)
+*.duckdb
+*.duckdb.wal
+
+# Generated agent artifacts
+agent_output/
+
+# Data lake is external (generated separately)
+coffee_capsule_dataset/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
