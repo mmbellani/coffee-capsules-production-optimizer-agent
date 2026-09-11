@@ -1,5 +1,4 @@
-# Evolve the Stack: 
-### Using Darwin to Evolve a Coffee-Capsule Analytics Agent for Speed and Token Efficiency
+# Evolve the Stack - Using Darwin to Evolve a Coffee-Capsule Analytics Agent for Speed and Token Efficiency
 
 ## Summary
 
