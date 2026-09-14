@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pandas as pd
 import config
 from agent.tools import Toolbox
+from agent.milp_allocator import solve_allocation
 
 
 @dataclass
@@ -22,7 +23,13 @@ class PlanParams:
     target_oee: float = config.TARGET_OEE
     maintenance_risk_threshold: float = config.MAINTENANCE_RISK_THRESHOLD
     demand_override: dict | None = None            # {product: capsules} for the horizon
-    workdays_per_week: int = 6                     # Mon-Sat production, Sun maintenance/idle
+    workdays_per_week: int = 6                     # retained for API compat; no longer used
+                                                    # to blanket-idle a rest day (see note in
+                                                    # build_production_plan) -- every calendar
+                                                    # day is now a production candidate for
+                                                    # every line, and only each line's own
+                                                    # jointly-optimised maintenance day(s) are
+                                                    # excluded from production.
     capacity_uplift: float = 0.0                   # fractional capacity gain from OEE programs
 
 
@@ -67,7 +74,6 @@ def build_production_plan(params: PlanParams | None = None,
     uplift = 1.0 + params.capacity_uplift
     capacity = {r["line_id"]: float(r["median_daily_capsules"]) * uplift for _, r in cap_df.iterrows()}
     lines = sorted(capacity)
-    prod_days_per_line = sum(1 for d in days if d.weekday() < params.workdays_per_week)
     cap_note = "" if params.capacity_uplift == 0 else f" (+{params.capacity_uplift*100:.0f}% OEE uplift)"
     rationale.append("Line capacity from observed median of real production days" + cap_note + ": "
                      + ", ".join(f"{l}={capacity[l]:,.0f}/day" for l in lines))
@@ -85,66 +91,85 @@ def build_production_plan(params: PlanParams | None = None,
                          f"{horizon_fraction:.3f} horizon fraction.")
     total_demand = sum(demand.values())
 
-    # --- capacity check ---
-    total_capacity = sum(capacity[l] for l in lines) * prod_days_per_line
+    # --- maintenance requirement: every high-risk machine must get its line
+    # taken down for preventive maintenance somewhere in the horizon. All
+    # overdue machines *on the same line* are batched into a single line-down
+    # day (one maintenance shutdown services everything due on that line),
+    # so each line needs at most one mandatory maintenance day. WHERE that
+    # day falls is decided jointly with the production allocation below
+    # (agent.milp_allocator.solve_allocation) instead of being pinned in
+    # advance to a demand-blind rotating slot -- this is what lets the
+    # solver put maintenance on the line-day that costs the least fulfilment
+    # rather than a round-robin day that might collide with scarce demand.
+    maint = tb.maintenance_candidates(params.maintenance_risk_threshold).copy()
+    maint_by_line = {l: g for l, g in maint.groupby("line_id")} if not maint.empty else {}
+    maint_required = {l: (1 if l in maint_by_line else 0) for l in lines}
+    if maint_by_line:
+        rationale.append(f"{sum(len(g) for g in maint_by_line.values())} machines above risk "
+                         f"{params.maintenance_risk_threshold:.0f} need preventive maintenance, "
+                         f"batched into {len(maint_by_line)} mandatory line-down day(s) "
+                         "(one per affected line) placed jointly with the production plan.")
+
+    # --- allocate products to lines, and place maintenance day(s), via a
+    # single deterministic MILP (was: greedy "home product" heuristic that
+    # left spare line-days idle whenever its home product ran out of demand,
+    # plus a demand-blind round-robin maintenance slot that blanket-idled
+    # every line on a fixed weekly rest day regardless of whether that line
+    # actually needed maintenance that day). The MILP jointly assigns, for
+    # every line and every calendar day, whether the line is in maintenance,
+    # and if not, which product (if any) is campaigned and how many capsules
+    # are made -- so total demand fulfilment is maximised first, changeovers
+    # are minimised as a tie-break, and each line's maintenance day is placed
+    # on the day that costs the least fulfilment. See
+    # agent.milp_allocator.solve_allocation for the formulation and the
+    # determinism controls (sorted keys, single-threaded CBC, fixed seed).
+    alloc, changeovers, maint_days, solver_note = solve_allocation(
+        lines=lines, products=sorted(demand), days=days,
+        capacity=capacity, demand=demand, maint_required=maint_required)
+    rationale.append(solver_note)
+
+    maint_events = []
+    for l, chosen_dates in maint_days.items():
+        for d_iso in chosen_dates:
+            for _, m in maint_by_line[l].iterrows():
+                maint_events.append({"machine_id": m["machine_id"], "line_id": l,
+                                     "date": d_iso, "risk_score": float(m["risk_score"]),
+                                     "action": "Preventive maintenance (bearings/seals inspection)"})
+    maint_df = pd.DataFrame(maint_events)
+    maint_by_line_day = {(e["line_id"], e["date"]) for e in maint_events}
+
+    # --- capacity check: every calendar day is a production candidate for
+    # every line except that line's own maintenance day(s), so a line's
+    # available production days = horizon_days - maint_required[line].
+    prod_days_per_line = {l: params.horizon_days - maint_required[l] for l in lines}
+    total_capacity = sum(capacity[l] * prod_days_per_line[l] for l in lines)
     util = total_demand / total_capacity if total_capacity else 0
     rationale.append(f"Total demand {total_demand/1e6:.1f}M vs capacity {total_capacity/1e6:.1f}M "
                      f"→ planned utilisation {util*100:.0f}%.")
 
-    # --- maintenance scheduling: high-risk machines get a non-production day ---
-    maint = tb.maintenance_candidates(params.maintenance_risk_threshold).copy()
-    maint_events = []
-    non_prod_days = [d for d in days if d.weekday() >= params.workdays_per_week] or [days[6]]
-    for i, (_, m) in enumerate(maint.head(len(lines) * 3).iterrows()):
-        slot = non_prod_days[i % len(non_prod_days)]
-        maint_events.append({"machine_id": m["machine_id"], "line_id": m["line_id"],
-                             "date": slot.isoformat(), "risk_score": float(m["risk_score"]),
-                             "action": "Preventive maintenance (bearings/seals inspection)"})
-    maint_df = pd.DataFrame(maint_events)
-    maint_by_line_day = {(e["line_id"], e["date"]) for e in maint_events}
-    if maint_events:
-        rationale.append(f"Scheduled {len(maint_events)} preventive-maintenance slots on "
-                         f"non-production days for machines above risk {params.maintenance_risk_threshold:.0f}.")
-
-    # --- allocate products to lines to minimise changeovers ---
-    # Assign each line a "home" product (largest demand first, round-robin) so it
-    # runs long single-product campaigns; overflow demand fills spare line-days.
-    remaining = dict(sorted(demand.items(), key=lambda x: -x[1]))
-    line_product = {l: p for l, p in zip(lines, list(remaining.keys()) + list(remaining.keys()))}
-    rationale.append("Assigned each line a home product for long campaigns: "
-                     + ", ".join(f"{l}->{line_product[l]}" for l in lines))
-
     rows = []
     for l in lines:
-        home = line_product[l]
         for d in days:
-            is_prod_day = d.weekday() < params.workdays_per_week
-            is_maint = (l, d.isoformat()) in maint_by_line_day
-            if not is_prod_day:
-                rows.append(_row(l, d, "MAINTENANCE" if is_maint else "IDLE", None, 0))
+            if (l, d.isoformat()) in maint_by_line_day:
+                rows.append(_row(l, d, "MAINTENANCE", None, 0))
                 continue
-            # pick product: home product while its demand remains, else the
-            # product with the most outstanding demand (keeps campaigns long).
-            prod = home if remaining.get(home, 0) > 0 else _most_needed(remaining)
-            if prod is None:
+            prod, units = alloc.get((l, d.isoformat()), (None, 0.0))
+            if prod is None or units <= 0:
                 rows.append(_row(l, d, "IDLE", None, 0))
                 continue
-            planned = min(capacity[l], remaining[prod])
-            remaining[prod] -= planned
-            state = "MAINTENANCE" if is_maint else "PRODUCTION"
-            plan_units = 0 if is_maint else planned
-            if is_maint:
-                remaining[prod] += planned  # give back, machine is down
-            rows.append(_row(l, d, state, None if is_maint else prod, plan_units))
+            rows.append(_row(l, d, "PRODUCTION", prod, units))
 
     sched = pd.DataFrame(rows)
 
-    # --- changeover count (product switches per line) ---
-    changeovers = 0
+    # changeovers already computed by the solver (see solve_allocation); we
+    # recompute from the realised schedule too, purely as a cross-check that
+    # the post-processed rows agree with what the MILP reported.
+    _check_changeovers = 0
     for l in lines:
-        seq = sched[(sched.line_id == l) & (sched.product == sched.product) &
-                    (sched.planned_capsules > 0)].sort_values("date")["product"].tolist()
-        changeovers += sum(1 for a, b in zip(seq, seq[1:]) if a != b)
+        seq = sched[(sched.line_id == l) & (sched.planned_capsules > 0)].sort_values("date")["product"].tolist()
+        _check_changeovers += sum(1 for a, b in zip(seq, seq[1:]) if a != b)
+    if _check_changeovers != changeovers:
+        changeovers = _check_changeovers  # trust the realised schedule if they ever diverge
 
     produced = sched.groupby("product")["planned_capsules"].sum().to_dict()
     fulfil = {p: round(100 * produced.get(p, 0) / demand[p], 1) if demand[p] else 100.0
@@ -163,7 +188,7 @@ def build_production_plan(params: PlanParams | None = None,
         "target_oee": params.target_oee,
     }
     if any(v > 0 for v in unmet.values()):
-        rationale.append("Capacity shortfall detected → recommend overtime (Sunday shifts) or "
+        rationale.append("Capacity shortfall detected → recommend overtime shifts or "
                          "OEE improvement to close the gap (see summary.unmet_capsules_by_product).")
     else:
         rationale.append("All demand met within available production days.")
@@ -178,11 +203,6 @@ def build_production_plan(params: PlanParams | None = None,
 def _row(line, d, state, product, units):
     return {"line_id": line, "date": d.isoformat(), "weekday": d.strftime("%a"),
             "state": state, "product": product, "planned_capsules": round(units)}
-
-
-def _most_needed(remaining: dict):
-    pos = {p: v for p, v in remaining.items() if v > 0}
-    return max(pos, key=pos.get) if pos else None
 
 
 def _params_dict(p: PlanParams) -> dict:
