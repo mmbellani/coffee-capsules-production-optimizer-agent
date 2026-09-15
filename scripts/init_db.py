@@ -5,6 +5,7 @@ Runs 01_raw_views.sql (views over parquet) then 02_build_aggregates.sql
 
 Usage:  python scripts/init_db.py
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -20,8 +21,21 @@ def run_script(con, path: Path):
     sql = substitute(path.read_text(encoding="utf-8"))
     # Split on semicolons at statement boundaries (naive but fine for our SQL).
     statements = [s.strip() for s in sql.split(";\n") if s.strip()]
+    # Set COFFEE_PROFILE_SQL=1 to print a per-statement timing breakdown (used
+    # to identify which table build dominates build time -- e.g. this is how
+    # we found that fact_downtime_episode's gaps-and-islands window pass and
+    # agg_machine_hour's grouped scan were the two heaviest statements, well
+    # ahead of agg_machine_day/agg_line_product_day/fact_changeover_episode).
+    # Left off by default so it never perturbs timed/cold builds.
+    profile = os.environ.get("COFFEE_PROFILE_SQL") == "1"
     for stmt in statements:
-        con.execute(stmt)
+        if profile:
+            t0 = time.time()
+            con.execute(stmt)
+            first_line = stmt.splitlines()[0][:70]
+            print(f"      [{time.time() - t0:6.3f}s] {first_line}")
+        else:
+            con.execute(stmt)
 
 
 def main():
@@ -31,7 +45,17 @@ def main():
         raise SystemExit(f"ERROR: data dir not found: {config.DATA_DIR}")
 
     con = duckdb.connect(str(config.DB_PATH))
-    con.execute("PRAGMA threads=4")
+    # Profiling (PRAGMA enable_profiling='json' per statement, see notes below)
+    # showed the two heaviest statements -- agg_machine_hour's grouped scan and
+    # fact_downtime_episode's gaps-and-islands window pass -- were both CPU
+    # (sort/hash) bound rather than I/O bound, yet the build only used 4 of the
+    # available cores. Scaling threads to all available cores (with insertion
+    # order preservation relaxed, since these are unordered aggregate/fact
+    # tables) lets DuckDB parallelize the parquet scan, window sorts, and hash
+    # aggregates across all cores -- the single highest-leverage change found.
+    n_threads = os.cpu_count() or 4
+    con.execute(f"PRAGMA threads={n_threads}")
+    con.execute("PRAGMA preserve_insertion_order=false")
 
     for name in ["01_raw_views.sql", "02_build_aggregates.sql"]:
         path = config.SQL_DIR / name
