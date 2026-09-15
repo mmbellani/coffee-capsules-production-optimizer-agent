@@ -84,8 +84,8 @@ class EfficiencyAgent:
         narrative, llm_used = None, False
         if want_llm:
             diag_payload = dict(dsum)
-            diag_payload["findings"] = [f.as_dict() for f in findings[:10]]
-            narrative = llm.narrate(diag_payload, plan.as_dict())
+            diag_payload["findings"] = [f.as_narration_dict() for f in findings[:10]]
+            narrative = llm.narrate(diag_payload, plan.as_narration_dict())
             llm_used = narrative is not None and not narrative.startswith("_(LLM")
             self._step("Compose executive narrative via LLM",
                        "LLM narrative generated." if llm_used else "LLM unavailable/failed.")

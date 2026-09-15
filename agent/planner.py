@@ -48,6 +48,18 @@ class ProductionPlan:
             "maintenance": self.maintenance.to_dict(orient="records"),
         }
 
+    def as_narration_dict(self) -> dict:
+        """Compact plan view for LLM narration: KPIs already fully capture the
+        schedule/maintenance outcome (totals, fulfilment, changeovers, risk
+        counts), so the per-day schedule rows and per-event maintenance table
+        are redundant here and are omitted to save tokens. Full detail remains
+        available via as_dict() for reports/hashing."""
+        return {
+            "start_date": self.start_date, "end_date": self.end_date,
+            "demand": self.demand, "capacity": self.capacity,
+            "summary": self.summary,
+        }
+
 
 def build_production_plan(params: PlanParams | None = None,
                           tb: Toolbox | None = None) -> ProductionPlan:

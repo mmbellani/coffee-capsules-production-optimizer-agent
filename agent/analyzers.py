@@ -29,6 +29,19 @@ class Finding:
         d["impact_eur"] = round(self.impact_eur)
         return d
 
+    def as_narration_dict(self) -> dict:
+        """Compact finding view for LLM narration: only the fields needed to
+        cite and prioritise (id/area/severity/scope/impact) are kept. The
+        prose fields (title/detail/recommendation/evidence) are dropped here
+        to save tokens; they are not part of the hashed/compared subset and
+        remain available via as_dict() for reports."""
+        return {
+            "id": self.id, "area": self.area, "severity": self.severity,
+            "scope": self.scope,
+            "impact_capsules": round(self.impact_capsules),
+            "impact_eur": round(self.impact_eur),
+        }
+
 
 def _sev(eur: float) -> str:
     if eur >= 150_000:
