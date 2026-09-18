@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.specstory/
+.vscode/
 
 # DuckDB warehouse (rebuild with scripts/init_db.py)
 *.duckdb

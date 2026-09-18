@@ -6,6 +6,13 @@ plant dataset (3 lines, 51 machines, 1-minute sensor data over a full year,
 SQL directly against the Parquet lake and a **Streamlit + Plotly** UI to explore
 the results interactively.
 
+## 📚 Wiki
+
+Full documentation lives in the [`wiki/`](wiki/Home.md) folder — start at
+[wiki/Home.md](wiki/Home.md) for a guided tour: overview, architecture, getting
+started, the data warehouse, the analytics query library, the dashboard, the
+agent, the MILP optimizer, configuration and the CLI reference.
+
 ## Architecture
 
 ```
