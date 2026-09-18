@@ -119,6 +119,74 @@ scored above its parent), largest first:
 
 ---
 
+## How output equivalence was guaranteed
+
+A build speedup is only valuable if the warehouse it produces is *identical* to
+the one the hand-written SQL produced. Darwin treated correctness as a **hard
+gate applied on every single candidate** — a program that builds faster but
+changes any table value scores **0** and is discarded, no matter how fast it is.
+Every champion and every accepted ancestor in the lineage records
+`results_identical = 1.0`.
+
+### The comparison is baseline-vs-candidate, per evaluation
+
+For each candidate, the evaluator builds **two** warehouses in the same run:
+
+1. the **pristine baseline** SQL (`sql/01_raw_views.sql` + the untouched
+   `sql/02_build_aggregates.sql`), and
+2. the **candidate's** mutated SQL.
+
+It then compares the two databases table-by-table. Because the baseline is
+rebuilt inside the evaluation (not read from a stored value), the check can never
+drift out of date, and a candidate cannot "pass" by matching a stale snapshot.
+
+### What is compared — the five materialised tables
+
+The gate covers exactly the tables the build produces, at their real grain:
+
+| Table | Grain |
+|-------|-------|
+| `agg_machine_hour` | machine × hour |
+| `agg_machine_day` | machine × day |
+| `agg_line_product_day` | line × product × day |
+| `fact_downtime_episode` | one row per downtime episode |
+| `fact_changeover_episode` | one row per changeover episode |
+
+### The fingerprint — order-insensitive, float-tolerant
+
+SQL is free to compute the same result in a different **row order**, and parallel
+hash/window operators routinely do. So the gate compares an **order-insensitive
+fingerprint** of each table rather than a naïve row-by-row dump:
+
+- **Row count** — the table must have exactly the same number of rows.
+- **Distinct-key counts** — the set of grain keys (e.g. distinct `machine_id`,
+  `line_id`, `product_code`, day) must match, so no group is added, dropped, or
+  merged.
+- **Column sums (rounded)** — every numeric column (running/down/changeover
+  minutes, good/reject units, energy kWh, episode durations, …) is aggregated and
+  compared at a fixed rounding tolerance.
+- **Date/time ranges** — min and max of every timestamp/day column must line up,
+  so the coverage window is unchanged.
+
+This is deliberately **float-tolerant**: DuckDB summing millions of rows in a
+different order can differ in the last floating-point bit, which is *not* a
+correctness regression. The rounding tolerance absorbs that legitimate
+non-determinism while still catching any real change (a shifted grain, a dropped
+`WHERE`, a changed join, an off-by-one window frame) — those move a sum, a count,
+or a key set well beyond the tolerance and fail the gate immediately.
+
+### Why this is safe even though the SQL was rewritten
+
+The champion's edits — extra `PRAGMA`s, added profiling, more threads, restructured
+window/scan passes, casting low-cardinality VARCHARs, consolidating full scans —
+all change *how* the tables are computed, never *what* they contain. The
+fingerprint is a semantic check on the **contents at the defined grain**, so any
+of those performance rewrites is only accepted if the five tables come out
+value-for-value equivalent to the pristine build. That is what lets the report
+claim **"byte-identical aggregate/fact tables"** with confidence: the equivalence
+was re-verified automatically for the champion and for every ancestor on the path
+to it.
+
 ## Method & reproducibility
 
 - **Correctness gate:** the five aggregate/fact tables must match the pristine

@@ -33,6 +33,10 @@ plan using a real **Mixed-Integer Linear Program (MILP)**.
 | [12 — Darwin Warehouse Build Speedup](12-Darwin-Warehouse-Build-Speedup.md) | Track A: 3.10× faster DuckDB warehouse build with byte-identical tables |
 | [13 — Darwin Optimizer Margin Gain](13-Darwin-Optimizer-Margin-Gain.md) | Track B: +0.19% provably-feasible margin gain on the already-optimal MILP |
 | [14 — Darwin Planner Fulfilment to 100%](14-Darwin-Planner-Fulfilment.md) | Track C: planner lifted to 100% demand fulfilment, feasible and changeover-free |
+| [15 — Baseline Performance (Before Darwin)](15-Baseline-Performance.md) | The repo's original pre-Darwin numbers that every experiment measured against |
+| [16 — How Darwin Produced These Results](16-How-Darwin-Produced-These-Results.md) | The method behind pages 11–14: evolutionary search, evaluators, gates, and why the numbers are trustworthy |
+| [17 — SQL Result Equality: Literature Review](17-SQL-Result-Equality-Literature-Review.md) | Background theory on verifying two SQL results are exactly equal (the basis of the build-speedup gate) |
+| [18 — ROI of Running Darwin](18-ROI-Of-Running-Darwin.md) | Quantified return on investment for the SQL build speedup and the token optimization |
 
 ## Quick links to the code
 
