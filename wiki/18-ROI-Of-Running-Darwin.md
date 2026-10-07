@@ -23,6 +23,13 @@ $100 API/compute spend. This is a planning scenario, not measured proof of a
 fivefold engineering-productivity gain; it assumes equivalent validated outcomes.
 Manual tooling and compute costs are not included.
 
+The bottom-up manual-effort estimates are **3–4 engineer-days for SQL**,
+**1–2 for prompt-payload optimization**, and **3–5 for application/MILP
+optimization**. The SQL-plus-prompt central estimate remains **40 hours**;
+the separate MILP estimate is **32 hours** and is **not included** in the $700
+investment or recurring ROI calculations. See
+[Illustrative engineering effort by optimization area](#illustrative-engineering-effort-by-optimization-area).
+
 The runtime benefits are supported by controlled build benchmarks and checks on
 the resulting tables and deterministic outputs. That makes the performance case
 more concrete than a suggestion to rewrite code, while **human review and
@@ -51,6 +58,11 @@ parts of this repo:
 - **SQL / warehouse-build latency** — page [12](12-Darwin-Warehouse-Build-Speedup.md) (11.108 s → 3.582 s, 3.10×)
 - **LLM narration token usage** — page [11](11-Darwin-Token-Optimization.md) (6,774 → 806 tokens, −88.1%)
 
+It also documents a separate manual-effort estimate for the **application/MILP
+margin improvement** — page [13](13-Darwin-Optimizer-Margin-Gain.md)
+(approximately +0.19% optimized gross margin). MILP search spend and assisted
+human effort are not reported, so no MILP net savings or payback are calculated.
+
 ROI has two sides: a **one-time cost** (the Darwin search plus engineering
 setup, supervision, review, and validation) and a **recurring
 benefit** that accrues on every future build / agent run *forever*, at zero
@@ -66,9 +78,11 @@ marginal cost. The key question is therefore not "is each unit saving large?"
 
 ## Assumptions (substitute your own)
 
-> **Single source of truth.** Edit the values in the block below and every table on
-> this page follows from them. Nothing downstream introduces a new number — each
-> result cell shows the formula it comes from, so you only ever change inputs here.
+> **SQL-plus-prompt ROI inputs.** The block below defines the inputs for the
+> financial calculations; update the corresponding tables when changing them.
+> The manual-effort ranges and task allocations in Part 1 are separate planning
+> estimates. Their SQL-plus-prompt central values reconcile to the 40-hour input;
+> the application/MILP estimate is outside this financial model.
 
 ```yaml
 # ---- Darwin one-time search cost (from pages 11–12) ----
@@ -233,6 +247,155 @@ avoided versus manual optimization**, whereas Parts 2–4 measure **recurring
 runtime benefits versus leaving the code unoptimized**. If both methods produce
 equivalent optimized code, both earn those recurring benefits. Do not add the
 $2,300 to Part 4's annual savings or treat it as a saving on every optimizer run.
+
+### Illustrative engineering effort by optimization area
+
+**These are estimates, not measurements.** The experiment reports measure code
+performance or optimization outcomes, not human working hours. The figures below
+are bottom-up budgets for independently **discovering, implementing, testing and
+validating comparable refinements without Darwin**. They do not estimate the
+much smaller task of copying Darwin's already-known solution.
+
+#### Scope and assumptions
+
+- One **engineer-day means eight hours of active human work**, not a calendar day
+  of elapsed delivery time.
+- An experienced engineer is familiar with the application and the relevant
+  technology: DuckDB/SQL, Python and LLM payloads, or operations research/MILP.
+- The existing model, dataset, runnable application and evaluation tooling are
+  available; no greenfield application or benchmark platform is being built.
+- Discovery includes investigating unsuccessful candidates and reviewing results.
+  Darwin's iteration/evaluation counts are **not converted into human hours**.
+- Estimates exclude major data remediation, learning the technology from scratch,
+  production rollout, unattended compute time, and future maintenance.
+- Equivalent outcomes are a comparison assumption, not a guarantee that manual
+  work within these budgets would reproduce the exact measured improvements.
+- Ranges reflect planning uncertainty; they are not statistical confidence
+  intervals or industry-standard benchmarks.
+
+#### Recommended manual-effort figures
+
+| Optimization area | Documented outcome | Manual effort without Darwin | Central planning value |
+|---|---|---:|---:|
+| **SQL warehouse build** | 11.108 s → 3.582 s; **67.8% lower build time / 3.10× speedup**; result-equivalence checks passed | **24–32 hours / 3–4 engineer-days** | **28 hours / 3.5 days** |
+| **Prompt-payload optimization** | 6,774 → 806 narration input tokens; **88.1% fewer tokens**; deterministic production outputs unchanged | **8–16 hours / 1–2 engineer-days** | **12 hours / 1.5 days** |
+| **SQL + prompt subtotal** | Scope of this page's financial ROI model | **32–48 hours / 4–6 engineer-days** | **40 hours / 5 days** |
+| **Application/MILP optimization** | **Approximately +0.19% optimized gross margin**, with evaluated feasibility checks passed | **24–40 hours / 3–5 engineer-days** | **32 hours / 4 days** |
+
+The subtotal adds the two scoped work estimates without assuming an additional
+shared setup task. The **28-hour SQL / 12-hour prompt split is a new illustrative
+allocation** of the existing 40-hour manual budget, not recovered time-tracking
+data. It does not allocate the eight-hour Darwin-assisted budget.
+
+#### SQL warehouse optimization: 24–32 hours
+
+| Manual activity | Illustrative effort |
+|---|---:|
+| Reproduce the cold-build baseline; profile individual statements and identify bottlenecks | 6–8 hours |
+| Develop and compare SQL/build-setting alternatives; re-profile as bottlenecks change | 10–12 hours |
+| Run result-equivalence checks and repeated benchmarks; review and document the selected changes | 8–12 hours |
+| **Total** | **24–32 hours** |
+
+The [SQL experiment report](12-Darwin-Warehouse-Build-Speedup.md) documents
+iterative profiling, scan/window restructuring and build-setting experiments,
+followed by **10 paired cold-build measurements**. This supports allowing several
+days for discovery and validation rather than estimating effort from the final
+code-change size. The measured gain applies to the warehouse build, not all SQL
+queries or end-to-end application latency.
+
+#### Prompt-payload optimization: 8–16 hours
+
+| Manual activity | Illustrative effort |
+|---|---:|
+| Trace payload construction, establish the token baseline and identify unnecessary content | 2–4 hours |
+| Implement compact narration-only representations while preserving full reporting outputs | 3–5 hours |
+| Verify token reduction and deterministic-output equivalence; review sample narratives and document changes | 3–7 hours |
+| **Total** | **8–16 hours** |
+
+The [prompt experiment report](11-Darwin-Token-Optimization.md) describes two
+targeted structural changes: compacting the production plan and findings supplied
+to narration while preserving full-fidelity reporting outputs. This is narrower
+than warehouse performance tuning; it is not model training or a redesign of the
+whole agent.
+
+**Narrative review is budgeted as a recommended activity, not claimed as a
+completed quality evaluation.** Unchanged deterministic outputs do not prove
+unchanged narrative quality. A formal narrative-quality evaluation, if required,
+may need additional effort beyond this sample-review allowance.
+
+#### Application/MILP optimization: 24–40 hours
+
+| Manual activity | Illustrative effort |
+|---|---:|
+| Reproduce the baseline; inspect the formulation, solver settings and objective | 4–6 hours |
+| Identify candidate refinements: tighter bounds, relaxation strength, optimality gaps and solver-budget allocation | 6–10 hours |
+| Implement and benchmark alternatives; investigate unsuccessful candidates | 8–14 hours |
+| Validate feasibility and regression behavior; review and document the selected change | 6–10 hours |
+| **Total** | **24–40 hours** |
+
+The [MILP experiment report](13-Darwin-Optimizer-Margin-Gain.md) describes
+data-derived uplift bounds and reallocation of solver time and optimality-gap
+budgets. These are specialist optimization tasks, not generic API development.
+Here, **"APIs/APPs" refers to the application's scenario-optimization logic**;
+no separate API endpoint performance benchmark was reported.
+
+The outcome is approximately **€3.588M → €3.595M in modeled gross margin**,
+or approximately **€7K more for the evaluated production plan**. It is a relative
+gross-margin improvement, **not execution-speed improvement, an increase of
+0.19 percentage points in margin rate, or measured annual profit**. The evaluated
+checks cover demand, capacity and the ≤15% uplift cap. This estimate does not
+cover the separate planner-fulfilment experiment.
+
+#### Reconciling effort with the existing ROI
+
+At the existing central assumptions:
+
+```text
+SQL manual effort + prompt manual effort = 28 + 12 = 40 hours
+Illustrative human effort released = 40 - 8 = 32 hours = 4 engineer-days
+Illustrative human-effort reduction = (40 - 8) / 40 = 80%
+```
+
+The **eight assisted hours and 80% reduction remain planning assumptions**, not
+measured results or effects validated by the external references. No per-area
+Darwin-assisted effort has been recorded, so per-area days saved should not be
+claimed. The MILP estimate is separate: without its search cost and assisted
+human effort, neither its net engineering savings nor its ROI can be calculated.
+
+#### External evidence and limits of applicability
+
+The following sources support the rationale for engineering leverage and retained
+human validation. **None establishes the task-specific day estimates above.**
+
+| Reference | Relevant finding | Appropriate interpretation here |
+|---|---|---|
+| **[1] McKinsey** | Reports **20–50% productivity improvements** across development tasks from early AI-assisted coding adoption; distinguishes coding assistance from broader AI-native workflow redesign | Supports the potential for AI-enabled productivity, not a MILP/SQL/prompt effort benchmark. Productivity increases are not numerically interchangeable with percentage reductions in engineering hours. |
+| **[2] Accenture** | Reports **roughly 60–75% reductions in delivery time** in environments where AI operates across the lifecycle; emphasizes process bottlenecks | Supports automating discovery, implementation and evaluation together. Delivery time is not human effort, so these percentages are not applied to our budgets. |
+| **[3] arXiv review** | Describes mixed, context-dependent productivity evidence and the continuing importance of human verification, correctness and maintainability | Supports explicit review/validation budgets and cautious scenario-based claims, not a universal productivity multiplier. |
+
+1. **McKinsey — [AI-native development: Rethinking software from the ground up](https://www.mckinsey.com/capabilities/tech-and-ai/our-insights/tech-forward/ai-native-development-rethinking-software-from-the-ground-up).**
+   The quantitative statement was corroborated through web-search retrieval of
+   the article; direct page retrieval timed out.
+2. **Accenture — [AI-native software delivery](https://www.accenture.com/en-us/blogs/cloud/ai-native-software-delivery).**
+   The delivery-time passage was retrieved directly.
+3. **[The Rise of AI-Native Software Engineering: Implications for Practice, Education, and the Future Workforce](https://arxiv.org/html/2606.12986v1), arXiv:2606.12986v1.**
+   The introduction was retrieved directly; use this preprint as contextual
+   synthesis, not independent validation of Darwin's results.
+
+Source review date: **7 October 2026**. The bottom-up allocations are judgment-based
+planning estimates informed by repository scope; they were not calculated by
+applying the external percentage claims to an assumed baseline.
+
+#### Executive-table wording
+
+| Data Warehousing (SQL based) | Agentic Apps (Prompt based) | APIs/APPs (MILP application logic) |
+|---|---|---|
+| **Illustrative manual effort: 3–4 engineer-days.** Baseline profiling, iterative SQL/build tuning, result-equivalence checks and controlled benchmarking. | **Illustrative manual effort: 1–2 engineer-days.** Payload analysis, compact narration views, token measurement, regression checks and narrative review. | **Illustrative manual effort: 3–5 engineer-days.** Formulation analysis, solver tuning, comparative experiments and feasibility/regression checks targeting a comparable gross-margin improvement. |
+
+Suggested shared footnote: *Bottom-up planning estimates, not measured savings;
+assume experienced engineers, existing evaluation tooling and eight-hour
+engineer-days. References [1–3] provide context, not task-specific benchmarks.
+Darwin-assisted effort by area was not measured.*
 
 ---
 
